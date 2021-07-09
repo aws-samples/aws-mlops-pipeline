@@ -1,0 +1,18 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+  pre_build:
+    commands:
+      - pip install --user aws-sam-cli
+  build:
+    commands:
+      # step function deploy
+      - sam build --template $(pwd)/template.yaml
+      - sam deploy --template-file .aws-sam/build/template.yaml --stack-name aws-mlops-pipeline-stack --capabilities CAPABILITY_NAMED_IAM --s3-bucket $BUCKET --s3-prefix deployements --no-fail-on-empty-changeset
+  post_build:
+    commands:
+      # invoke setup lambda to add production model performance in DDB table
+      - aws lambda invoke --function-name set_inital_table response.json
+

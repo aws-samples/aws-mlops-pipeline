@@ -1,0 +1,143 @@
+{
+    "Comment": "State Machine for Training Workflow",
+    "StartAt": "Set Training Configuration",
+    "States": {
+        "Set Training Configuration": {
+            "Resource": "${SetTrainingConfigArn}",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$",
+            "Next": "Pre-processing"
+        },
+        "Pre-processing": {
+            "Resource": "arn:aws:states:::sagemaker:createProcessingJob.sync",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$.train_preprocessing.result",
+            "Parameters": {
+                "AppSpecification": {
+                    "ContainerEntrypoint.$": "$.train_preprocessing.entry_point",
+                    "ContainerArguments.$": "$.train_preprocessing.countainer_arguments",
+                    "ImageUri": "${ImageURI}"
+                },
+                "ProcessingResources": {
+                    "ClusterConfig": {
+                        "InstanceCount.$": "$.train_preprocessing.instance_count",
+                        "InstanceType.$": "$.train_preprocessing.instance_type",
+                        "VolumeSizeInGB.$": "$.train_preprocessing.volume_size_in_gb"
+                    }
+                },
+                "RoleArn": "${RoleArn}",
+                "ProcessingJobName.$": "$.train_preprocessing.processing_job_name",
+                "ProcessingInputs": [
+                    {
+                        "InputName": "INPUT",
+                        "S3Input": {
+                            "LocalPath": "/opt/ml/processing/input",
+                            "S3Uri.$": "$.train_preprocessing.input_s3_path",
+                            "S3DataType": "S3Prefix",
+                            "S3InputMode": "File"
+                        }
+                    }
+                ],
+                "ProcessingOutputConfig": { 
+                    "Outputs": [
+                        {
+                            "OutputName": "OUTPUT",
+                            "S3Output": {
+                                "LocalPath": "/opt/ml/processing/output",
+                                "S3Uri.$": "$.train_preprocessing.output_s3_path",
+                                "S3UploadMode": "EndOfJob"
+                            }
+                        }
+                    ]
+                }
+            },
+            "Retry": [
+                {
+                  "ErrorEquals": [
+                    "SageMaker.AmazonSageMakerException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 10,
+                  "BackoffRate": 1.1
+                }
+            ],
+            "Next": "Training"
+        }, 
+        "Training":{  
+            "Type":"Task",
+            "Resource":"arn:aws:states:::sagemaker:createTrainingJob.sync",
+            "InputPath": "$",
+            "ResultPath": "$.training.result",
+            "Parameters":{  
+                "TrainingJobName.$":"$.training.training_job_name",
+                "ResourceConfig":{
+                "InstanceCount.$": "$.training.instance_count",
+                "InstanceType.$": "$.training.instance_type",
+                "VolumeSizeInGB.$": "$.training.volume_size_in_gb"
+                },
+                "HyperParameters":{  
+                    "max_depth":"5",
+                    "eta":"0.2",
+                    "gamma":"4",
+                    "min_child_weight":"6",
+                    "subsample":"0.8",
+                    "silent":"0",
+                    "objective":"binary:logistic",
+                    "num_round":"5"
+                },
+                "AlgorithmSpecification":{  
+                    "TrainingImage.$":"$.training.training_image",
+                    "TrainingInputMode":"File"
+                },
+                "OutputDataConfig":{  
+                    "S3OutputPath.$":"$.training.output_s3_path"
+                },
+                "RoleArn": "${RoleArn}",
+                "StoppingCondition": {
+                    "MaxRuntimeInSeconds": 1800
+                },
+                "InputDataConfig":[
+                {
+                    "ChannelName":"train",
+                    "DataSource":{  
+                        "S3DataSource":{  
+                            "S3DataType":"S3Prefix",
+                            "S3Uri.$":"$.training.input_s3_path",
+                            "S3DataDistributionType":"FullyReplicated"
+                        }
+                    },
+                    "ContentType": "csv",
+                    "CompressionType": "None"
+                }]
+            },
+            "Retry": [
+                {
+                  "ErrorEquals": [
+                    "SageMaker.AmazonSageMakerException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 10,
+                  "BackoffRate": 1.1
+                }
+            ],
+            "Next": "Create Model"
+        },
+        "Create Model": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sagemaker:createModel",
+            "Parameters": {
+              "PrimaryContainer": {
+                "Image.$": "$.model.image",
+                "ModelDataUrl.$": "$.model.model_data_url"
+              },
+              "ExecutionRoleArn": "${RoleArn}",
+              "ModelName.$": "$.model.model_name"
+            },
+            "InputPath": "$",
+            "ResultPath": "$.model.result",
+            "End": true
+        }
+    }
+}

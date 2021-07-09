@@ -1,0 +1,108 @@
+{
+    "Comment": "State Machine for Training Workflow",
+    "StartAt": "Set Inference Configuration",
+    "States": {
+        "Set Inference Configuration": {
+            "Resource": "${SetInferenceConfigArn}",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$",
+            "Next": "Pre-processing"
+        },
+        "Pre-processing": {
+            "Resource": "arn:aws:states:::sagemaker:createProcessingJob.sync",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$.preprocessing.result",
+            "Parameters": {
+                "AppSpecification": {
+                    "ContainerEntrypoint.$": "$.preprocessing.entry_point",
+                    "ContainerArguments.$": "$.preprocessing.countainer_arguments",
+                    "ImageUri": "${ImageURI}"
+                },
+                "ProcessingResources": {
+                    "ClusterConfig": {
+                        "InstanceCount.$": "$.preprocessing.instance_count",
+                        "InstanceType.$": "$.preprocessing.instance_type",
+                        "VolumeSizeInGB.$": "$.preprocessing.volume_size_in_gb"
+                    }
+                },
+                "RoleArn": "${RoleArn}",
+                "ProcessingJobName.$": "$.preprocessing.processing_job_name",
+                "ProcessingInputs": [
+                    {
+                        "InputName": "INPUT",
+                        "S3Input": {
+                            "LocalPath": "/opt/ml/processing/input",
+                            "S3Uri.$": "$.preprocessing.input_s3_path",
+                            "S3DataType": "S3Prefix",
+                            "S3InputMode": "File"
+                        }
+                    }
+                ],
+                "ProcessingOutputConfig": { 
+                    "Outputs": [
+                        {
+                            "OutputName": "OUTPUT",
+                            "S3Output": {
+                                "LocalPath": "/opt/ml/processing/output",
+                                "S3Uri.$": "$.preprocessing.output_s3_path",
+                                "S3UploadMode": "EndOfJob"
+                            }
+                        }
+                    ]
+                }
+            },
+            "Retry": [
+                {
+                  "ErrorEquals": [
+                    "SageMaker.AmazonSageMakerException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 10,
+                  "BackoffRate": 1.1
+                }
+            ],
+            "Next": "Batch Transform"
+        },
+        "Batch Transform": {
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$.batch_transform.result",
+            "Resource": "arn:aws:states:::sagemaker:createTransformJob.sync",
+            "Parameters": {
+              "ModelName.$": "$.transform.model_name",
+              "TransformInput": {
+                "CompressionType": "None",
+                "ContentType": "text/csv",
+                "SplitType": "Line",
+                "DataSource": {
+                  "S3DataSource": {
+                    "S3DataType": "S3Prefix",
+                    "S3Uri.$": "$.transform.input_s3_path"
+                  }
+                }
+              },
+              "TransformOutput": {
+                "S3OutputPath.$": "$.transform.output_s3_path"
+              },
+              "TransformResources": {
+                "InstanceCount.$": "$.transform.instance_count",
+                "InstanceType.$": "$.transform.instance_type"
+              },
+              "TransformJobName.$": "$.transform.transform_job_name"
+            },
+            "Retry": [
+                {
+                  "ErrorEquals": [
+                    "SageMaker.AmazonSageMakerException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 10,
+                  "BackoffRate": 1.1
+                }
+            ],
+            "End": true
+        }
+    }
+}

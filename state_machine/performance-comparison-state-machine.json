@@ -1,0 +1,66 @@
+{
+    "Comment": "State Machine for Training Workflow",
+    "StartAt": "Set Performance Comparison Configuration",
+    "States": {
+        "Set Performance Comparison Configuration": {
+            "Resource": "${SetPerformanceConfigArn}",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$",
+            "Next": "Performance Comparison"
+        },
+        "Performance Comparison": {
+            "Resource": "arn:aws:states:::sagemaker:createProcessingJob.sync",
+            "Type": "Task",
+            "InputPath": "$",
+            "ResultPath": "$.performance_comparison.result",
+            "Parameters": {
+                "AppSpecification": {
+                    "ContainerEntrypoint.$": "$.performance_comparison.entry_point",
+                    "ContainerArguments.$": "$.performance_comparison.countainer_arguments",
+                    "ImageUri": "${ImageURI}"
+                },
+                "ProcessingResources": {
+                    "ClusterConfig": {
+                        "InstanceCount.$": "$.performance_comparison.instance_count",
+                        "InstanceType.$": "$.performance_comparison.instance_type",
+                        "VolumeSizeInGB.$": "$.performance_comparison.volume_size_in_gb"
+                    }
+                },
+                "RoleArn": "${RoleArn}",
+                "ProcessingJobName.$": "$.performance_comparison.processing_job_name",
+                "ProcessingInputs": [
+                    {
+                        "InputName": "INPUT_TRUTH",
+                        "S3Input": {
+                            "LocalPath": "/opt/ml/processing/input/truth",
+                            "S3Uri.$": "$.performance_comparison.input_truth_path",
+                            "S3DataType": "S3Prefix",
+                            "S3InputMode": "File"
+                        }
+                    },
+                    {
+                        "InputName": "INPUT_RESULT",
+                        "S3Input": {
+                            "LocalPath": "/opt/ml/processing/input/result",
+                            "S3Uri.$": "$.performance_comparison.input_result_path",
+                            "S3DataType": "S3Prefix",
+                            "S3InputMode": "File"
+                        }
+                    }
+                ]
+            },
+            "Retry": [
+                {
+                  "ErrorEquals": [
+                    "SageMaker.AmazonSageMakerException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 10,
+                  "BackoffRate": 1.1
+                }
+            ],
+            "End": true
+        }
+    }
+}

@@ -1,0 +1,293 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Create the initial MLOps workflow with model performance comparison
+
+Globals:
+  Function:
+    Runtime: python3.7
+    Handler: handler.lambda_handler
+    Timeout: 30
+    MemorySize: 128
+
+Parameters:
+  ModelUrl:
+    Type: String
+    Description: Production Model Artifact S3 URL
+    Default: s3://{{resolve:ssm:code-bucket:1}}/src/model/model.tar.gz
+
+Mappings: 
+  RegionMap: 
+    "us-west-1":
+      "XGBoostImage": "632365934929.dkr.ecr.us-west-1.amazonaws.com/xgboost:latest"
+    "us-west-2":
+      "XGBoostImage": "433757028032.dkr.ecr.us-west-2.amazonaws.com/xgboost:latest"
+    "us-east-1":
+      "XGBoostImage": "811284229777.dkr.ecr.us-east-1.amazonaws.com/xgboost:latest"
+    "us-east-2":
+      "XGBoostImage": "825641698319.dkr.ecr.us-east-2.amazonaws.com/xgboost:latest"
+    "ap-northeast-1":
+      "XGBoostImage": "501404015308.dkr.ecr.ap-northeast-1.amazonaws.com/xgboost:latest"
+    "ap-northeast-2":
+      "XGBoostImage": "306986355934.dkr.ecr.ap-northeast-2.amazonaws.com/xgboost:latest"
+    "ap-southeast-1":
+      "XGBoostImage": "475088953585.dkr.ecr.ap-southeast-1.amazonaws.com/xgboost:latest"
+    "ap-southeast-2":
+      "XGBoostImage": "544295431143.dkr.ecr.ap-southeast-2.amazonaws.com/xgboost:latest"
+    "ap-south-1":
+      "XGBoostImage": "991648021394.dkr.ecr.ap-south-1.amazonaws.com/xgboost:latest"
+    "ap-east-1":
+      "XGBoostImage": "286214385809.dkr.ecr.ap-east-1.amazonaws.com/xgboost:latest"
+    "ca-central-1":
+      "XGBoostImage": "469771592824.dkr.ecr.ca-central-1.amazonaws.com/xgboost:latest"
+    "cn-north-1":
+      "XGBoostImage": "390948362332.dkr.ecr.cn-north-1.amazonaws.com.cn/xgboost:latest"
+    "cn-northwest-1":
+      "XGBoostImage": "387376663083.dkr.ecr.cn-northwest-1.amazonaws.com.cn/xgboost:latest"
+    "eu-central-1":
+      "XGBoostImage": "813361260812.dkr.ecr.eu-central-1.amazonaws.com/xgboost:latest"
+    "eu-north-1":
+      "XGBoostImage": "669576153137.dkr.ecr.eu-north-1.amazonaws.com/xgboost:latest"
+    "eu-west-1":
+      "XGBoostImage": "685385470294.dkr.ecr.eu-west-1.amazonaws.com/xgboost:latest"
+    "eu-west-2":
+      "XGBoostImage": "644912444149.dkr.ecr.eu-west-2.amazonaws.com/xgboost:latest"
+    "eu-west-3":
+      "XGBoostImage": "749696950732.dkr.ecr.eu-west-3.amazonaws.com/xgboost:latest"
+    "me-south-1":
+      "XGBoostImage": "249704162688.dkr.ecr.me-south-1.amazonaws.com/xgboost:latest"
+    "sa-east-1":
+      "XGBoostImage": "855470959533.dkr.ecr.sa-east-1.amazonaws.com/xgboost:latest"
+    "us-gov-west-1":
+      "XGBoostImage": "226302683700.dkr.ecr.us-gov-west-1.amazonaws.com/xgboost:latest"
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Join
+        - "-"
+        - - "mlops-data-bucket"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+    
+  Trigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: trigger_state_machine
+      CodeUri: ./lambda/trigger_state_machine
+      Environment:
+        Variables:
+          TRAINING_STATE_MACHINE: !Ref TrainingStateMachine
+          INFERENCE_STATE_MACHINE: !Ref InferenceStateMachine
+          PERFORMANCE_STATE_MACHINE: !Ref PerformanceStateMachine
+      Events:
+        S3Event:
+          Type: S3
+          Properties:
+            Bucket: !Ref S3Bucket  
+            Events: s3:ObjectCreated:*
+        SFNEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              detail:
+                status:
+                  - "SUCCEEDED"
+                stateMachineArn:
+                  - !Ref TrainingStateMachine
+                  - !Ref InferenceStateMachine
+              source:
+                - "aws.states"
+              detail-type:
+                - "Step Functions Execution Status Change"
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: "*"
+
+  TrainingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionSubstitutions: 
+        SetTrainingConfigArn: !GetAtt SetTrainingConfig.Arn
+        ImageURI: "{{resolve:ssm:ecr-uri:1}}"
+        RoleArn: !GetAtt SageMakerRole.Arn
+      DefinitionUri: ./state_machine/training-state-machine.json
+      Name: MLOps-Training
+      Role: !GetAtt StateMachineRole.Arn
+
+  SageMakerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SageMaker-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "sagemaker.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      Policies:
+        - PolicyName: "SageMaker-Role-Policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:*
+                  - iam:PassRole
+                  - s3:*
+                  - ecr:*
+                  - dynamodb:*
+                  - logs:*
+                Resource: '*'
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StateMachine-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "states.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      Policies:
+        - PolicyName: "StateMachine-Role-Policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:*
+                  - iam:PassRole
+                  - events:*
+                  - states:StartExecution
+                  - lambda:InvokeFunction
+                  - s3:*
+                  - logs:*
+                Resource: '*'
+    
+  SetTrainingConfig:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: set_training_config
+      CodeUri: ./lambda/set_training_config
+      Environment:
+        Variables:
+          XGBOOST_IMAGE: !FindInMap [RegionMap, !Ref "AWS::Region", "XGBoostImage"] 
+
+  ProdModelTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: prod-model-table
+      PrimaryKey:
+        Name: state
+        Type: String
+
+  HistoricalModelTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: hist-model-table
+      PrimaryKey:
+        Name: model_name
+        Type: String
+
+  InferenceStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionSubstitutions: 
+        SetInferenceConfigArn: !GetAtt SetInferenceConfig.Arn
+        ImageURI: "{{resolve:ssm:ecr-uri:1}}"
+        RoleArn: !GetAtt SageMakerRole.Arn
+      DefinitionUri: ./state_machine/inference-state-machine.json
+      Name: MLOps-Inference
+      Role: !GetAtt StateMachineRole.Arn
+
+  SetInferenceConfig:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: set_inference_config
+      CodeUri: ./lambda/set_inference_config
+      Environment:
+        Variables:
+          PROD_MODEL_TABLE: !Ref ProdModelTable
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+
+  PerformanceStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionSubstitutions: 
+        SetPerformanceConfigArn: !GetAtt SetPerformanceConfig.Arn
+        ImageURI: "{{resolve:ssm:ecr-uri:1}}"
+        RoleArn: !GetAtt SageMakerRole.Arn
+      DefinitionUri: ./state_machine/performance-comparison-state-machine.json
+      Name: MLOps-Performance-Comparison
+      Role: !GetAtt StateMachineRole.Arn
+
+  SetPerformanceConfig:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: set_performance_config
+      CodeUri: ./lambda/set_performance_config
+      Environment:
+        Variables:
+          PROD_MODEL_TABLE: !Ref ProdModelTable
+          HIST_MODEL_TABLE: !Ref HistoricalModelTable
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+
+  ProdModel:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ExecutionRoleArn: !GetAtt SageMakerRole.Arn
+      ModelName: xgboost-production
+      PrimaryContainer: 
+        Image: !FindInMap [RegionMap, !Ref "AWS::Region", "XGBoostImage"] 
+        ModelDataUrl: !Ref ModelUrl
+
+  SetInitalTable:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: set_inital_table
+      CodeUri: ./lambda/set_inital_table
+      Environment:
+        Variables:
+          PROD_MODEL_TABLE: !Ref ProdModelTable
+          PROD_MODEL_NAME: !GetAtt ProdModel.ModelName
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+

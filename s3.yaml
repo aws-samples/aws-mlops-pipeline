@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Join
+        - "-"
+        - - "mlops-code-bucket"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  CodeBucket:
+     Type: AWS::SSM::Parameter
+     Properties:
+       Name: code-bucket
+       Type: String
+       Value: !Ref S3Bucket
+
+Outputs:
+  BucketName:
+    Description: Code bucket
+    Value: !Ref S3Bucket

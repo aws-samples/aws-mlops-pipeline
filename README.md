@@ -6,13 +6,7 @@ This template is code in AWS Serverless Application Model framework. If you want
 
 ## Architecture Overview
 
-### Training Workflow
-
-![Train Arc Image](src/pic/training_arc.png)
-
-### Inference Workflow
-
-![Inf Arc Image](src/pic/inference_arc.png)
+![Arc Image](src/pic/arc.png)
 
 ## Usage Guide
 
